@@ -1,0 +1,135 @@
+import tkinter as tk
+import random
+import time
+from collections import deque
+
+class EightPuzzle:
+    def _init_(self, root):
+        self.root = root
+        self.root.title("8-Puzzle Game")
+        
+        self.grid_size = 3
+        
+        self.tiles = self.get_initial_state()
+        self.goal_state = self.get_goal_state()
+        
+        self.buttons = []
+        self.create_widgets()
+    
+    def get_initial_state(self):
+        while True:
+            user_input = input("Ingrese el orden inicial (ejemplo: 1 2 3 4 5 6 7 8 0): ")
+            tiles = self.parse_input(user_input)
+            if tiles and self.is_solvable(tiles):
+                return tiles
+            print("Orden inválido o no solucionable. Se generará uno aleatorio.")
+            tiles = list(range(1, 9)) + [None]
+            random.shuffle(tiles)
+            if self.is_solvable(tiles):
+                return tiles
+    
+    def get_goal_state(self):
+        while True:
+            user_input = input("Ingrese el orden objetivo (ejemplo: 1 2 3 4 5 6 7 8 0): ")
+            goal = self.parse_input(user_input)
+            if goal:
+                return goal
+            print("Orden inválido. Se usará el orden clásico.")
+        return list(range(1, 9)) + [None]
+    
+    def parse_input(self, user_input):
+        try:
+            nums = list(map(int, user_input.split()))
+            if sorted(nums) == list(range(9)):
+                return [num if num != 0 else None for num in nums]
+        except ValueError:
+            pass
+        return None
+    
+    def create_widgets(self):
+        for i in range(self.grid_size):
+            row_buttons = []
+            for j in range(self.grid_size):
+                value = self.tiles[i * self.grid_size + j]
+                text = str(value) if value else ""
+                btn = tk.Button(self.root, text=text, font=("Arial", 20), width=5, height=2,
+                                command=lambda r=i, c=j: self.move_tile(r, c))
+                btn.grid(row=i, column=j, padx=2, pady=2)
+                row_buttons.append(btn)
+            self.buttons.append(row_buttons)
+        
+        self.solve_button = tk.Button(self.root, text="Resolver", font=("Arial", 14), command=self.solve)
+        self.solve_button.grid(row=3, column=0, columnspan=3, pady=10)
+    
+    def move_tile(self, row, col):
+        empty_row, empty_col = self.find_empty()
+        if (abs(empty_row - row) + abs(empty_col - col)) == 1:  # Only adjacent moves
+            self.tiles[empty_row * self.grid_size + empty_col], self.tiles[row * self.grid_size + col] = \
+                self.tiles[row * self.grid_size + col], self.tiles[empty_row * self.grid_size + empty_col]
+            self.update_buttons()
+    
+    def find_empty(self):
+        empty_index = self.tiles.index(None)
+        return divmod(empty_index, self.grid_size)
+    
+    def update_buttons(self):
+        for i in range(self.grid_size):
+            for j in range(self.grid_size):
+                value = self.tiles[i * self.grid_size + j]
+                self.buttons[i][j].config(text=str(value) if value else "")
+    
+    def is_solvable(self, tiles):
+        inv_count = sum(
+            1 for i in range(8) for j in range(i + 1, 9)
+            if tiles[i] and tiles[j] and tiles[i] > tiles[j]
+        )
+        return inv_count % 2 == 0
+    
+    def solve(self):
+        solution = self.bfs_solve()
+        if solution:
+            self.animate_solution(solution)
+    
+    def bfs_solve(self):
+        queue = deque([(self.tiles[:], [])])
+        visited = set()
+        visited.add(tuple(self.tiles))
+        
+        while queue:
+            current_state, path = queue.popleft()
+            if current_state == self.goal_state:
+                return path
+            
+            empty_index = current_state.index(None)
+            empty_row, empty_col = divmod(empty_index, self.grid_size)
+            moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            
+            for dr, dc in moves:
+                new_row, new_col = empty_row + dr, empty_col + dc
+                if 0 <= new_row < self.grid_size and 0 <= new_col < self.grid_size:
+                    new_index = new_row * self.grid_size + new_col
+                    new_state = current_state[:]
+                    new_state[empty_index], new_state[new_index] = new_state[new_index], new_state[empty_index]
+                    
+                    if tuple(new_state) not in visited:
+                        queue.append((new_state, path + [new_state]))
+                        visited.add(tuple(new_state))
+        return None
+    
+    def animate_solution(self, solution):
+        def step(index):
+            if index < len(solution):
+                self.tiles = solution[index]
+                self.update_buttons()
+                self.root.after(500, step, index + 1)
+            else:
+                self.show_steps(len(solution))
+        step(0)
+    
+    def show_steps(self, steps):
+        self.solve_button.config(text=f"Resuelto en {steps} pasos")
+
+if _name_ == "_main_":
+    root = tk.Tk()
+    game = EightPuzzle(root)
+    root.mainloop()
