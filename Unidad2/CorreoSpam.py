@@ -1,113 +1,91 @@
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
+from tabulate import tabulate
 
 class SpamDetector:
     def __init__(self, file_path):
-        """Inicializa la clase SpamDetector con el archivo CSV."""
         self.file_path = file_path
-        self.data = pd.read_csv(file_path)  # Cargar el archivo CSV
-        self.stopwords = set(['el', 'y', 'es', 'en', 'para', 'de', 'a', 'por', 'con', 'esto'])  # Lista ejemplo de stopwords
-        self.spam_keywords = ['whatsapp', 'dinero', 'gratis', 'oportunidad', 'iphone']  # Palabras clave de spam
+        self.data = pd.read_csv(file_path)
+        self.stopwords = {'el', 'y', 'es', 'en', 'para', 'de', 'a', 'por', 'con', 'esto'}
+        self.spam_keywords = {'whatsapp', 'dinero', 'gratis', 'oportunidad', 'iphone'}
 
     def preprocess_text(self):
-        """Realiza el preprocesamiento del texto: eliminación de duplicados, minúsculas, caracteres especiales, etc."""
-        # Eliminar correos duplicados
-        self.data = self.data.drop_duplicates(subset='contenido')
-        
-        # Convertir todo el texto a minúsculas
-        self.data['contenido'] = self.data['contenido'].str.lower()  # Minusculas
-        
-        # Eliminar caracteres especiales
-        self.data['contenido'] = self.data['contenido'].str.replace(r'[^a-zA-Z0-9\s]', '')  # Eliminar caracteres especiales
-        
-        # Dividir el texto en palabras (tokenización)
-        self.data['contenido'] = self.data['contenido'].str.split()  # Dividir en palabras
-        
-        # Eliminar las stopwords
-        self.data['contenido'] = self.data['contenido'].apply(lambda x: [word for word in x if word not in self.stopwords])  # Eliminar stopwords
+        self.data.drop_duplicates(subset='contenido', inplace=True)
+        self.data['contenido'] = self.data['contenido'].str.lower().str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
+        self.data['contenido'] = self.data['contenido'].str.split()
+        self.data['contenido'] = self.data['contenido'].apply(lambda x: [word for word in x if word not in self.stopwords])
 
     def vectorize_text(self):
-        """Vectoriza el texto utilizando TfidfVectorizer."""
-        self.data['contenido'] = self.data['contenido'].str.join(' ')  # Juntar las palabras nuevamente en una cadena
-        vectorizer = TfidfVectorizer(stop_words='english')  # Crear vectorizador
-        features = vectorizer.fit_transform(self.data['contenido'])  # Vectorizar el texto
+        self.data['contenido'] = self.data['contenido'].str.join(' ')
+        vectorizer = TfidfVectorizer()
+        features = vectorizer.fit_transform(self.data['contenido'])
         return features, vectorizer.get_feature_names_out()
 
     def apply_rules(self):
-        """Aplica las reglas de clasificación para identificar los correos spam."""
+        self.data['etiqueta'] = 'not_spam'
         for index, row in self.data.iterrows():
-            # Regla 1: Si el correo electrónico contiene la palabra clave "Whatsapp", entonces es Spam.
-            if 'whatsapp' in row['contenido']:
+            contenido = set(row['contenido'])
+            if any(keyword in contenido for keyword in self.spam_keywords):
                 self.data.at[index, 'etiqueta'] = 'spam'
-            # Regla 2: Si el correo electrónico contiene un enlace a un sitio web conocido por distribuir malware, entonces es spam.
-            elif 'spamlink.com' in row['enlaces'] or 'spamiphone.com' in row['enlaces']:
+            elif any(link in str(row['enlaces']) for link in ['spamlink.com', 'spamiphone.com']):
                 self.data.at[index, 'etiqueta'] = 'spam'
-            # Regla 3: Si el correo electrónico tiene un remitente desconocido, entonces es Spam.
-            elif row['remitente'] not in ['SPAM1@mail.com', 'amigo@mail.com', 'SPAM2@mail.com', 'boss@mail.com']:  # Remitentes conocidos
+            elif row['remitente'] not in {'SPAM1@mail.com', 'amigo@mail.com', 'SPAM2@mail.com', 'boss@mail.com'}:
                 self.data.at[index, 'etiqueta'] = 'spam'
-            # Regla 4: Si el correo electrónico tiene un asunto que es demasiado bueno para ser verdad, entonces es Spam.
-            elif 'dinero' in row['asunto'] or 'iphone' in row['asunto']:
-                self.data.at[index, 'etiqueta'] = 'spam'
-            # Regla 5: Si el correo electrónico está mal escrito o tiene errores gramaticales, entonces es Spam.
-            # (Aquí, por simplicidad, consideramos un ejemplo básico de errores gramaticales)
-            elif 'haz sido' in row['contenido'] or 'gratis' in row['contenido']:
+            elif any(keyword in row['asunto'] for keyword in {'dinero', 'iphone'}):
                 self.data.at[index, 'etiqueta'] = 'spam'
 
-    def calculate_spam_probability(self):
-        """Calcula la probabilidad previa de spam P(Spam)."""
-        total_correos = len(self.data)  # Total de correos en el dataset
-        correos_spam = len(self.data[self.data['etiqueta'] == 'spam'])  # Número de correos spam
-        P_spam = correos_spam / total_correos  # Probabilidad previa de spam
-        return P_spam
-
-    def calculate_caracteristicas(self):
-        """Calcula las características de cada correo y devuelve un DataFrame con las características y el correo asociado."""
+    def calculate_probabilities(self):
+        total_correos = len(self.data)
+        correos_spam = (self.data['etiqueta'] == 'spam').sum()
+        correos_no_spam = total_correos - correos_spam
+        
+        P_spam = correos_spam / total_correos if total_correos > 0 else 0
+        P_no_spam = 1 - P_spam
+        
         features, feature_names = self.vectorize_text()
-        features_array = features.toarray()
-        df_features = pd.DataFrame(features_array, columns=feature_names)
-        df_features['correo'] = self.data['contenido']
-        return df_features
+        df_features = pd.DataFrame(features.toarray(), columns=feature_names)
+        df_features['etiqueta'] = self.data['etiqueta']
+
+        spam_features = df_features[df_features['etiqueta'] == 'spam'].drop(columns=['etiqueta'])
+        non_spam_features = df_features[df_features['etiqueta'] == 'not_spam'].drop(columns=['etiqueta'])
+
+        total_spam_words = spam_features.sum().sum()
+        total_non_spam_words = non_spam_features.sum().sum()
+
+        P_caracteristicas_spam = spam_features.sum() / total_spam_words if total_spam_words > 0 else 0
+        P_caracteristicas_no_spam = non_spam_features.sum() / total_non_spam_words if total_non_spam_words > 0 else 0
+
+        return P_spam, P_no_spam, P_caracteristicas_spam, P_caracteristicas_no_spam
+
+    def evaluate_model(self):
+        clasificaciones = self.data['etiqueta'].values
+        etiquetas_reales = self.data['etiqueta'].values
+        
+        precision = np.mean(clasificaciones == etiquetas_reales) 
+        tp = np.sum((clasificaciones == 'spam') & (etiquetas_reales == 'spam'))
+        fn = np.sum((clasificaciones == 'not_spam') & (etiquetas_reales == 'spam'))
+        recuperacion = tp / (tp + fn) if (tp + fn) > 0 else 0
+        
+        return precision, recuperacion
     
     def get_processed_data(self):
-        """Devuelve el DataFrame procesado (sin duplicados y con texto preprocesado)."""
         return self.data
 
-# Uso de la clase SpamDetector
-
-# Crear una instancia de la clase SpamDetector con el archivo CSV
-spam_detector = SpamDetector('Correo.csv')  # Asegúrate de que el archivo spam.csv esté en el mismo directorio o proporciona la ruta completa
-
-# Preprocesar el texto
+# Uso de la clase
+spam_detector = SpamDetector('Correo.csv')
 spam_detector.preprocess_text()
-
-# Aplicar las reglas para clasificar los correos
 spam_detector.apply_rules()
 
-# Calcular la probabilidad previa de spam
-P_spam = spam_detector.calculate_spam_probability()
+data = spam_detector.get_processed_data()
+print("\nDatos procesados:")
+print(tabulate(data.head(), headers='keys', tablefmt='pretty'))
 
-# Mostrar la probabilidad de spam
-print(f'La probabilidad previa de spam (P(Spam)) es: {P_spam:.4f}')
+P_spam, P_no_spam, P_caracteristicas_spam, P_caracteristicas_no_spam = spam_detector.calculate_probabilities()
+precision, recuperacion = spam_detector.evaluate_model()
 
-# Vectorizar el texto
-features, feature_names = spam_detector.vectorize_text()
-
-# Mostrar las características generadas (palabras/bigrams)
-features_array = features.toarray()
-df_features = pd.DataFrame(features_array, columns=feature_names)
-
-# Mostrar las primeras filas de las características
-print(df_features.head())
-
-# Mostrar el DataFrame procesado con la etiqueta 'spam' o 'not_spam'
-print(spam_detector.get_processed_data())
-# Verificación de correos específicos (fuera de la clase)
-# Ejemplo de cómo acceder a un correo específico
-remitente = 'boss@mail.com', 'amigo@mail.com'
-contenido = spam_detector.get_processed_data()
-# Filtrar para comprobar si alguno de los correos en 'contenido' corresponde al remitente deseado
-filtered_data = contenido[contenido['remitente'] == remitente]
-
-print('correo spam:', filtered_data[filtered_data['etiqueta'] == 'spam'])
-print('correo no spam:', filtered_data[filtered_data['etiqueta'] == 'not_spam'])
+print("\nResultados del análisis de spam:")
+print(f'Probabilidad previa de spam: {P_spam:.4f}')
+print(f'Probabilidad de características dado spam:\n{P_caracteristicas_spam.to_string()}')
+print(f'Probabilidad de características dado no spam:\n{P_caracteristicas_no_spam.to_string()}')
+print(f'Precisión: {precision:.4f}, Recuperación: {recuperacion:.4f}')
